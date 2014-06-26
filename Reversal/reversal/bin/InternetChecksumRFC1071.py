@@ -2,6 +2,8 @@ __author__ = 'dmd'
 
 from Reversal.reversal.bin.utils import *
 from Reversal.reversal.bin.Function import Function
+from Reversal.reversal.bin.LogicalBitShiftLeft import LogicalBitShiftLeft
+from Reversal.reversal.bin.LogicalBitShiftRight import LogicalBitShiftRight
 
 class InternetChecksumRFC1071(Function):
     def __init__(self):
@@ -15,26 +17,32 @@ class InternetChecksumRFC1071(Function):
         super(InternetChecksumRFC1071, self).__init__(self.internetchecksumrfc1071_obverse, self.internetchecksumrfc1071_reverse)
         pass
     def __repr__(self):
-        return "{0}(x, t = {1})".format(self.__class__.__name__, self.parameter)
+        return "{0}(x)".format(self.__class__.__name__)
         pass
     def internetchecksumrfc1071_obverse(self, input_value):
         input_cleanvalue = ConvertAnything2BitArray(input_value)
-        input_bytesvalue = input_cleanvalue.bytes
+        input_bytesvalue = input_cleanvalue.tobytes()
         pos = len(input_bytesvalue)
         if (pos & 1):  # If odd...
             pos -= 1
-            sum = ord(input_bytesvalue[pos])  # Prime the sum with the odd end byte
+            sum = input_bytesvalue[pos]  # Prime the sum with the odd end byte
         else:
             sum = 0
+        logger.debug("sum: {0}".format(sum))
         #Main code: loop to calculate the checksum
         while pos > 0:
             pos -= 2
-            sum += (ord(input_bytesvalue[pos + 1]) << 8) + ord(input_bytesvalue[pos])
+            sum += (input_bytesvalue[pos + 1] << 8) + input_bytesvalue[pos]
+            logger.debug("pos: {0}, sum: {1}".format(pos,sum))
         sum = (sum >> 16) + (sum & 0xffff)
+        logger.debug("sum: {0}".format(sum))
         sum += (sum >> 16)
+        logger.debug("sum: {0}".format(sum))
         output_bytesvalue = (~ sum) & 0xffff #Keep lower 16 bits
+        logger.debug("sum: {0}".format(sum))
         output_bytesvalue = output_bytesvalue >> 8 | ((output_bytesvalue & 0xff) << 8)  # Swap bytes
-        output_cleanvalue = BitArray(output_bytesvalue)
+        logger.debug("sum: {0}".format(sum))
+        output_cleanvalue = ConvertAnything2BitArray(output_bytesvalue)
         logger.debug("x = {0}, {1} = {2}".format(input_cleanvalue.bin, self, output_cleanvalue.bin))
         return output_cleanvalue
         pass

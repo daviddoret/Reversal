@@ -16,5 +16,9 @@ print(a)
 b = int(a)
 print(b)
 
-c = BitArray(b)
+c = bitstring.BitArray(uint=b,length=32)
 print(c.bin)
+
+d = ~c
+print(d.bin)
+

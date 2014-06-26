@@ -16,7 +16,8 @@ def ConvertAnything2BitArray(anything):
         return ConvertAnything2BitArray(bytes(anything, encoding='ascii'))
         pass
     elif(isinstance(anything, int)):
-        return BitArray(anything)
+        #TODO: Check behavior for negative numbers
+        return bitstring.BitArray(uint=anything,length=32)
         pass
     elif(isinstance(anything, bytes)):
         return BitArray(anything)
@@ -25,7 +26,7 @@ def ConvertAnything2BitArray(anything):
         return anything
         pass
     elif(isinstance(anything, ipaddress.IPv4Address)):
-        return BitArray(int(anything))
+        return bitstring.BitArray(uint=int(anything),length=32)
         pass
     pass
 
