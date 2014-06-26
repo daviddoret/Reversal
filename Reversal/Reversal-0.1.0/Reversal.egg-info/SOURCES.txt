@@ -1,0 +1,14 @@
+CHANGES.txt
+LICENSE.txt
+MANIFEST.in
+README.txt
+main.py
+setup.py
+test.py
+Reversal/__init__.py
+Reversal/main.py
+Reversal.egg-info/PKG-INFO
+Reversal.egg-info/SOURCES.txt
+Reversal.egg-info/dependency_links.txt
+Reversal.egg-info/requires.txt
+Reversal.egg-info/top_level.txt
