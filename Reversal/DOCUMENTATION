@@ -1,0 +1,21 @@
+Reversal
+
+The whole idea is that...
+
+given an algorithm or function f
+with a domain D
+and a range R
+
+x e D
+y e R
+when f(x) = y
+
+if we know y
+if we don't know x
+
+the purpose of Reversal is to find f-1 and x' such that
+f-1(y) = x'
+f(x') = y
+x and x' e X where X designates the set of values such that f(i e X) = y
+
+x, x' and y may be numbers or complex data structures
