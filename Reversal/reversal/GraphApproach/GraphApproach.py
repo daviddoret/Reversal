@@ -1,48 +1,74 @@
 __author__ = 'dmd'
 
 from Reversal.reversal.bin.utils import *
+import json
+import uuid
+import collections # Makes it possible to perform: if isinstance(e, collections.Iterable):
 
-class Source(object):
+
+class DataObject(object):
     """
     A super base class that inherits from object,
     in such a way as to implement the diamond rule
     in the presence of multiple inheritance
     """
-    def __init__(self):
-        pass
+
+    #class initialization
+    _database = {}
+
+    def __init__(self, uid=None, label=None, container=None):
+        #Base classes initialization
+        object.__init__(self)
+        self.uid = uuid.uuid4()
+        self._container = None
+        self._label = None
+        DataObject._database[self.uid] = self
+        #Initialize pseudo-private members
+        #Call set methods to comply with their logic
+        self._set_container(container=container)
+        self.set_label(label=label)
 
     def __repr__(self):
         return self.to_json()
 
-    def to_json_content(self):
-        """
-        Returns the content of the JSON object, i.e. without the brackets {}.
-        This is useful when you want to concatenate content from multiple super classes.
-        """
-        pass
+    def __hash__(self):
+        return self.uid
 
-    def to_json(self):
-        """
-        Returns the complete JSON object, i.e. with the brackets {}.
-        """
-        return '{{{0}}}'.format(self.to_json_content())
+    def __eq__(self, other):
+        if isinstance(other, DataObject):
+            if self.uid == other.uid:
+                return True
+            else:
+                return False
+        else:
+            return False
 
-class Contained(Source):
-    """
-    Containment designate an exclusive relationship of ownership, semantically equivalent to a UML composition.
-    """
-    def __init__(self, container=None):
-        #Base classes initialization
-        Source.__init__(self)
-        #Initialize pseudo-private members
-        self._container = None
-        #Call set methods to comply with their logic
-        self._set_container(container)
+    def __ne__(self, other):
+        return not(self == other)
 
-    def __repr__(self):
-        # Containment is not represented to avoid cluttering.
-        # Parenthesis are used in parent Sources to represent containment.
-        return ""
+    def _set_uid(self, uid):
+        """
+        The set uid method is pseudo private to avoid messing around with objects.
+        Its only use cases are object initialization and deserialization.
+        :param uid:
+        """
+        if self.uid != None:
+            # If the object had a uid before, we should implement some magic here to ensure
+            # all references are made to the new uid instead. We may decide to keep the old
+            # uid as a "redirected" reference.
+            DataObject._database.pop(uid)
+        self.uid = uid
+        DataObject._database[uid] = self
+
+    def _set_uid_auto(self):
+        uid = uuid.uuid4()
+        self._set_uid(uid)
+
+    def get_uid(self):
+        return self.uid
+
+    def get_object(cls, key):
+        return DataObject._database[key]
 
     def get_container(self):
         return self._container
@@ -57,23 +83,40 @@ class Contained(Source):
         """
         self._container = container
 
+    #def to_json_content(self, depth=0):
+    #    """
+    #    Returns the content of the JSON object, i.e. without the brackets {}.
+    #    This is useful when you want to concatenate content from multiple super classes.
+    #    """
+    #    pass
 
-class Labelled(Source):
-    """
-    Makes it possible to label elements for readability purposes.
-    """
-    def __init__(self, label=None):
-        #Base classes initialization
-        Source.__init__(self)
-        #Initialize pseudo-private members
-        self._label = None
-        #Call set methods to comply with their logic
-        if label == None:
-            label = "toto"
-        self.set_label(label=label)
+    #def to_json(self, depth=0):
+    #    """
+    #    Returns the complete JSON object, i.e. with the brackets {}.
+    #    """
+    #    return '\n{0}{{{1}\n{2}}}'.format(' ' * depth, self.to_json_content(depth=depth + 1), ' ' * depth)
+    #    #return json.dumps('{{{0}}}'.format(self.to_json_content()), indent=4, sort_keys=True)
 
-    def __repr__(self):
-        return "{0}('{1}')".format(self.__class__.__name__, self._label)
+    def to_json(self, depth=0, prevent_infinite_loop_list=None):
+        return "\n{0}{{{1}\n{0}}}".format(" " * depth, self.to_json_content(depth=depth, prevent_infinite_loop_list=prevent_infinite_loop_list))
+
+    def to_json_content(self, depth=0, prevent_infinite_loop_list={}):
+        # QUESTION: Consider using __hash__ instead of get_uid in such a way to cover all objects
+        if prevent_infinite_loop_list == None:
+            prevent_infinite_loop_list = {}
+        json = '\n{0}"class":"{1}"'.format(" " * depth, self.__class__.__name__)
+        for key in self.__dict__:
+            if isinstance(self.__dict__[key], DataObject):
+                if self.__dict__[key].get_uid() in prevent_infinite_loop_list:
+                    # This object was already or will be serialized as part of a parent object,
+                    # in conclusion we must only serialize it as a reference.
+                    json += '\n{0}"{{reference":{{"class":"{1}","label":"{2}","uid":"{3}"}}'.format(" " * depth + 1,  self.__dict__[key].__class__.__name__,  self.__dict__[key].get_label(),  self.__dict__[key].get_uid())
+                else:
+                    # Otherwise we can perform a deep serialization.
+                    json += '\n{0}"{1}":{2}'.format(" " * depth, key, self.__dict__[key].to_json(depth=depth + 1, prevent_infinite_loop_list=self._get_references_direct()))
+            else:
+                json += '\n{0}"{1}":"{2}"'.format(" " * depth, key, str(self.__dict__[key]))
+        return json
 
     def get_label(self):
         return self._label
@@ -81,16 +124,25 @@ class Labelled(Source):
     def set_label(self, label):
         self._label = label
 
-    def to_json_content(self):
-        return '"label":"{0}"'.format(self.get_label())
+    def _get_references_direct(self):
+        references_direct = {}
+        for key in self.__dict__:
+            if isinstance(self.__dict__[key],DataObject):
+                # If a reference
+                references_direct[self.__dict__[key].get_uid()] = self.__dict__[key]
+            elif isinstance(self.__dict__[key], dict):
+                for sub_key in self.__dict__[key]:
+                    if isinstance(self.__dict__[key][sub_key],DataObject):
+                        # If a reference
+                        references_direct[self.__dict__[key][sub_key].get_uid()] = self.__dict__[key][sub_key]
+        return references_direct
 
 
-class Function(Labelled, Source):
+class Call(DataObject):
 
     def __init__(self, label=None, logic=None):
         #Base classes initialization
-        Source.__init__(self)
-        Labelled.__init__(self, label=label)
+        DataObject.__init__(self, label=label)
         #Initialize pseudo-private members
         self._data_inbound_surface = None
         self._data_outbound_surface = None
@@ -98,10 +150,10 @@ class Function(Labelled, Source):
         self._execution_outbound_surface = None
         self._logic = None
         #Call set methods to comply with their logic
-        self._set_data_inbound_surface(data_inbound_surface=FunctionDataInboundSurface())
-        self._set_data_outbound_surface(data_outbound_surface=FunctionDataOutboundSurface())
-        self._set_execution_inbound_surface(execution_inbound_surface=FunctionExecutionInboundSurface())
-        self._set_execution_outbound_surface(execution_outbound_surface=FunctionExecutionOutboundSurface())
+        self._set_data_inbound_surface(data_inbound_surface=CallDataInboundSurface())
+        self._set_data_outbound_surface(data_outbound_surface=CallDataOutboundSurface())
+        self._set_execution_inbound_surface(execution_inbound_surface=CallExecutionInboundSurface())
+        self._set_execution_outbound_surface(execution_outbound_surface=CallExecutionOutboundSurface())
         self.set_logic(logic)
 
     def get_data_inbound_surface(self):
@@ -138,28 +190,17 @@ class Function(Labelled, Source):
     def set_logic(self, logic):
         self._logic = logic
 
-    def to_json_content(self):
-        #return Labelled.to_json_content(self) + \
-        return \
-            '"data_inbound_surface":{0}'.format(self._data_inbound_surface.to_json()) + \
-            ',"data_outbound_surface":{0}'.format(self._data_inbound_surface.to_json()) + \
-            ',"execution_inbound_surface":{0}'.format(self._data_inbound_surface.to_json()) + \
-            ',"execution_outbound_surface":{0}'.format(self._data_inbound_surface.to_json()) + \
-            ',"logic":{0}'.format(self._data_inbound_surface.to_json())
 
-
-class Logic(Contained, Labelled, Source):
+class Logic(DataObject):
     """
     A logic component is always able to implement a forward execution
-    on its parent function.
+    on its parent call.
     A logic component should be able to find ways to implement a
-    backward execution on its parent function.
+    backward execution on its parent call.
     """
-    def __init__(self, container_function, label):
+    def __init__(self, container=None, label=None):
         #Base classes initialization
-        Source.__init__(self)
-        Contained.__init__(self, container=container_function)
-        Labelled.__init__(self, label=label)
+        DataObject.__init__(self, container=container, label=label)
 
     def execute_forward(self):
         pass
@@ -168,12 +209,11 @@ class Logic(Contained, Labelled, Source):
         pass
 
 
-class FunctionDataInboundSurface(Contained, Source):
+class CallDataInboundSurface(DataObject):
 
-    def __init__(self, container=None):
+    def __init__(self, container=None, label=None):
         #Base classes initialization
-        Source.__init__(self)
-        Contained.__init__(self, container=container)
+        DataObject.__init__(self, container=container, label=label)
         #Initialize pseudo-private members
         self._data_inbound_ports = {}
 
@@ -194,24 +234,19 @@ class FunctionDataInboundSurface(Contained, Source):
             return self._data_inbound_ports(label)
         else:
             # Instead of throwing exceptions, dynamically create a new unlinked port
-            new_port = FunctionDataInboundPort(label=label)
+            new_port = CallDataInboundPort(label=label)
             self.add_port(new_port)
             return new_port
 
-class FunctionDataInboundPort(Contained, Labelled, Source):
+class CallDataInboundPort(DataObject):
 
-    def __init__(self, container_surface=None, label=None, linked_variable=None):
+    def __init__(self, container=None, label=None, linked_variable=None):
         #Base classes initialization
-        Source.__init__(self)
-        Contained.__init__(self, container=container_surface)
-        Labelled.__init__(self, label=label)
+        DataObject.__init__(self, container=container, label=label)
         #Initialize pseudo-private members
         self._linked_variable = None
         #Call set methods to comply with their logic
         self.set_linked_variable(linked_variable=linked_variable)
-
-    def __repr__(self):
-        return "{0}({1},LinkedVariable({2}))".format(self.__class__.__name__, super(Labelled, self), self.get_linked_variable().get_label())
 
     def get_linked_variable(self):
         return self._linked_variable
@@ -220,22 +255,18 @@ class FunctionDataInboundPort(Contained, Labelled, Source):
         self._linked_variable = linked_variable
 
 
-class FunctionDataOutboundSurface(Contained, Source):
+class CallDataOutboundSurface(DataObject):
 
-    def __init__(self, container_function=None):
+    def __init__(self, container=None):
         #Base classes initialization
-        Source.__init__(self)
-        Contained.__init__(self, container=container_function)
+        DataObject.__init__(self, container=container)
         #Initialize pseudo-private members
         self._data_outbound_ports = {}
-
-    def __repr__(self):
-        return "{0}({1})".format(self.__class__.__name__, self._data_outbound_ports)
 
     def add_port(self, data_outbound_port=None):
         #If a pre-configured port is not provided, create one out of the blue.
         if data_outbound_port == None:
-            data_outbound_port = FunctionDataOutboundPort()
+            data_outbound_port = CallDataOutboundPort()
         #Assign the proper container object
         data_outbound_port._set_container(container=self)
         if data_outbound_port.get_label() in self._data_outbound_ports:
@@ -249,18 +280,16 @@ class FunctionDataOutboundSurface(Contained, Source):
             return self._data_outbound_ports[label]
         else:
             # Instead of throwing exceptions, dynamically create a new unlinked port
-            new_port = FunctionDataOutboundPort(label=label)
+            new_port = CallDataOutboundPort(label=label)
             self.add_port(new_port)
             return new_port
 
 
-class FunctionDataOutboundPort(Contained, Labelled, Source):
+class CallDataOutboundPort(DataObject):
 
-    def __init__(self, container_surface=None, label=None, linked_variable=None):
+    def __init__(self, container=None, label=None, linked_variable=None):
         #Base classes initialization
-        Source.__init__(self)
-        Contained.__init__(self, container=container_surface)
-        Labelled.__init__(self, label=label)
+        DataObject.__init__(self, container=container, label=label)
         #Initialize pseudo-private members
         self._linked_variable = None
         #Call set methods to comply with their logic
@@ -276,12 +305,11 @@ class FunctionDataOutboundPort(Contained, Labelled, Source):
         self._linked_variable = linked_variable
 
 
-class FunctionExecutionInboundSurface(Contained, Source):
+class CallExecutionInboundSurface(DataObject):
 
     def __init__(self, container=None):
         #Base classes initialization
-        Source.__init__(self)
-        Contained.__init__(self, container=container)
+        DataObject.__init__(self, container=container)
         #Initialize pseudo-private members
         self._exec_inbound_ports = {}
 
@@ -299,30 +327,24 @@ class FunctionExecutionInboundSurface(Contained, Source):
             return self._exec_inbound_ports(label)
         else:
             # Instead of throwing exceptions, dynamically create a new unlinked port
-            new_port = FunctionDataInboundPort(container_surface=self, label=label)
+            new_port = CallDataInboundPort(container_surface=self, label=label)
             self.add_port(new_port)
             return new_port
 
-class FunctionExecInboundPort(Contained, Labelled, Source):
+class CallExecutionInboundPort(DataObject):
 
-    def __init__(self, parent_surface, label):
+    def __init__(self, container, label):
         #Base classes initialization
-        Source.__init__(self)
-        Contained.__init__(self, container=parent_surface)
-        Labelled.__init__(self, label=label)
+        DataObject.__init__(self, container=container, label=label)
         #Pseudo-private members
-        self._parent_surface = parent_surface
-        self._label = label
         #Public members
-        self.label = self._label
 
 
-class FunctionExecutionOutboundSurface(Contained, Source):
+class CallExecutionOutboundSurface(DataObject):
 
     def __init__(self, container=None):
         #Base classes initialization
-        Source.__init__(self)
-        Contained.__init__(self, container=container)
+        DataObject.__init__(self, container=container)
         #Initialize pseudo-private members
         self._exec_outbound_ports = {}
 
@@ -340,59 +362,54 @@ class FunctionExecutionOutboundSurface(Contained, Source):
             return self._exec_outbound_ports(label)
         else:
             # Instead of throwing exceptions, dynamically create a new unlinked port
-            new_port = FunctionDataInboundPort(container_surface=self, label=label)
+            new_port = CallDataInboundPort(container_surface=self, label=label)
             self.add_port(new_port)
             return new_port
 
-class FunctionExecOutboundPort(Contained, Labelled, Source):
+class CallExecOutboundPort(DataObject):
 
-    def __init__(self, parent_surface,label):
+    def __init__(self, container,label):
         #Base classes initialization
-        Source.__init__(self)
-        Contained.__init__(self, container=parent_surface)
-        Labelled.__init__(self, label=label)
+        DataObject.__init__(self, container=container, label=label)
         #Pseudo-private members
-        self._parent_surface = parent_surface
-        self._label = label
         #Public members
-        self.label = self._label
 
 
-class DataVariable(Contained, Source):
-
-    def __init__(self):
-        pass
-
-
-class DataSurface(Contained, Source):
+class DataVariable(DataObject):
 
     def __init__(self):
         pass
 
 
-class FunctionComposite(Source):
-    #TODO: Inherit from Function in such a way as to make Algorithms callable
-    def __init__(self, start_function, end_function):
-        self._start_function = start_function
-        self._end_function = end_function
+class DataSurface(DataObject):
+
+    def __init__(self):
+        pass
+
+
+class CallComposite(DataObject):
+    #TODO: Inherit from Call in such a way as to make Algorithms callable
+    def __init__(self, start_call, end_call):
+        self._start_call = start_call
+        self._end_call = end_call
 
     def start(self):
-        self._start_function.execute_forward()
+        self._start_call.execute_forward()
 
 
-class ExecTrace(Source, ):
-
-    def __init__(self):
-        pass
-
-
-class ExecTraceForward(ExecTrace, Source):
+class CallExecutionTrace(DataObject, ):
 
     def __init__(self):
         pass
 
 
-class ExecTraceBackward(ExecTrace, Source):
+class CallExecutionTraceForward(CallExecutionTrace, DataObject):
+
+    def __init__(self):
+        pass
+
+
+class CallExecutionTraceBackward(CallExecutionTrace, DataObject):
     """
     A backward execution trace is distinct from a forward exec trace
     because it informs us on one possible pass amongst multiple
