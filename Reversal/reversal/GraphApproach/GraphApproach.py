@@ -4,6 +4,7 @@ from Reversal.reversal.bin.utils import *
 import json
 import uuid
 import collections # Makes it possible to perform: if isinstance(e, collections.Iterable):
+from enum import Enum
 
 
 class DataObject(object):
@@ -104,18 +105,20 @@ class DataObject(object):
         # QUESTION: Consider using __hash__ instead of get_uid in such a way to cover all objects
         if prevent_infinite_loop_list == None:
             prevent_infinite_loop_list = {}
+        prevent_infinite_loop_list.update(self._get_references_direct())
         json = '\n{0}"class":"{1}"'.format(" " * depth, self.__class__.__name__)
         for key in self.__dict__:
-            if isinstance(self.__dict__[key], DataObject):
-                if self.__dict__[key].get_uid() in prevent_infinite_loop_list:
-                    # This object was already or will be serialized as part of a parent object,
-                    # in conclusion we must only serialize it as a reference.
-                    json += '\n{0}"{{reference":{{"class":"{1}","label":"{2}","uid":"{3}"}}'.format(" " * depth + 1,  self.__dict__[key].__class__.__name__,  self.__dict__[key].get_label(),  self.__dict__[key].get_uid())
+            if key not in prevent_infinite_loop_list:
+                if isinstance(self.__dict__[key], DataObject):
+                    if self.__dict__[key].get_uid() in prevent_infinite_loop_list:
+                        # This object was already or will be serialized as part of a parent object,
+                        # in conclusion we must only serialize it as a reference.
+                        json += '\n{0}"{{reference":{{"class":"{1}","label":"{2}","uid":"{3}"}}'.format(" " * (depth + 1),  self.__dict__[key].__class__.__name__,  self.__dict__[key].get_label(),  self.__dict__[key].get_uid())
+                    else:
+                        # Otherwise we can perform a deep serialization.
+                        json += '\n{0}"{1}":{2}'.format(" " * depth, key, self.__dict__[key].to_json(depth=depth + 1, prevent_infinite_loop_list=prevent_infinite_loop_list))
                 else:
-                    # Otherwise we can perform a deep serialization.
-                    json += '\n{0}"{1}":{2}'.format(" " * depth, key, self.__dict__[key].to_json(depth=depth + 1, prevent_infinite_loop_list=self._get_references_direct()))
-            else:
-                json += '\n{0}"{1}":"{2}"'.format(" " * depth, key, str(self.__dict__[key]))
+                    json += '\n{0}"{1}":"{2}"'.format(" " * depth, key, str(self.__dict__[key]))
         return json
 
     def get_label(self):
@@ -127,12 +130,12 @@ class DataObject(object):
     def _get_references_direct(self):
         references_direct = {}
         for key in self.__dict__:
-            if isinstance(self.__dict__[key],DataObject):
+            if isinstance(self.__dict__[key], DataObject):
                 # If a reference
                 references_direct[self.__dict__[key].get_uid()] = self.__dict__[key]
             elif isinstance(self.__dict__[key], dict):
                 for sub_key in self.__dict__[key]:
-                    if isinstance(self.__dict__[key][sub_key],DataObject):
+                    if isinstance(self.__dict__[key][sub_key], DataObject):
                         # If a reference
                         references_direct[self.__dict__[key][sub_key].get_uid()] = self.__dict__[key][sub_key]
         return references_direct
@@ -145,12 +148,14 @@ class Call(DataObject):
         DataObject.__init__(self, label=label)
         #Initialize pseudo-private members
         self._data_inbound_surface = None
+        self._data_midbound_surface = None
         self._data_outbound_surface = None
         self._execution_inbound_surface = None
         self._execution_outbound_surface = None
         self._logic = None
         #Call set methods to comply with their logic
         self._set_data_inbound_surface(data_inbound_surface=CallDataInboundSurface())
+        self._set_data_midbound_surface(data_midbound_surface=CallDataMidboundSurface())
         self._set_data_outbound_surface(data_outbound_surface=CallDataOutboundSurface())
         self._set_execution_inbound_surface(execution_inbound_surface=CallExecutionInboundSurface())
         self._set_execution_outbound_surface(execution_outbound_surface=CallExecutionOutboundSurface())
@@ -162,6 +167,13 @@ class Call(DataObject):
     def _set_data_inbound_surface(self, data_inbound_surface):
         data_inbound_surface._set_container(self)
         self._data_inbound_surface = data_inbound_surface
+
+    def get_data_midbound_surface(self):
+        return self._data_midbound_surface
+
+    def _set_data_midbound_surface(self, data_midbound_surface):
+        data_midbound_surface._set_container(self)
+        self._data_midbound_surface = data_midbound_surface
 
     def get_data_outbound_surface(self):
         return self._data_outbound_surface
@@ -188,7 +200,13 @@ class Call(DataObject):
         return self._logic
 
     def set_logic(self, logic):
+        # Clean inbound ports
+        # Clean midbound ports
+        # Clean outbound ports
         self._logic = logic
+        # Configure outbound ports
+        # Configure midbound ports
+        # Configure inbound ports
 
 
 class Logic(DataObject):
@@ -197,16 +215,95 @@ class Logic(DataObject):
     on its parent call.
     A logic component should be able to find ways to implement a
     backward execution on its parent call.
+    A logic component defines a template of inbound, midbound and outbound ports.
+    These ports will be copied to the call component where the logic will be executed.
     """
-    def __init__(self, container=None, label=None):
+    def __init__(self, container=None, label=None, execute_forward=None, execute_backward=None):
         #Base classes initialization
         DataObject.__init__(self, container=container, label=label)
+        #Initialize pseudo-private members
+        self.execute_forward = execute_forward
+        self.execute_backward = execute_backward
+        self._data_inbound_surface = None
+        self._data_midbound_surface = None
+        self._data_outbound_surface = None
+        #Call set methods to comply with their logic
+        self._set_data_inbound_surface(data_inbound_surface=CallDataInboundSurface())
+        self._set_data_midbound_surface(data_midbound_surface=CallDataMidboundSurface())
+        self._set_data_outbound_surface(data_outbound_surface=CallDataOutboundSurface())
 
     def execute_forward(self):
         pass
 
     def execute_backward(self):
         pass
+
+    def get_reverse(self, label=None):
+        return Logic(container=self.get_container(), label=label, execute_forward=self.execute_backward, execute_backward=self.execute_forward)
+
+    def get_data_inbound_surface(self):
+        return self._data_inbound_surface
+
+    def _set_data_inbound_surface(self, data_inbound_surface):
+        data_inbound_surface._set_container(self)
+        self._data_inbound_surface = data_inbound_surface
+
+    def get_data_midbound_surface(self):
+        return self._data_midbound_surface
+
+    def _set_data_midbound_surface(self, data_midbound_surface):
+        data_midbound_surface._set_container(self)
+        self._data_midbound_surface = data_midbound_surface
+
+    def get_data_outbound_surface(self):
+        return self._data_outbound_surface
+
+    def _set_data_outbound_surface(self, data_outbound_surface):
+        data_outbound_surface._set_container(self)
+        self._data_outbound_surface = data_outbound_surface
+
+
+class LogicLibrary(DataObject):
+    """
+    """
+    def __init__(self):
+        self._library = {}
+        add = Logic(container=None, label=TypicalLabels.logic_add, execute_forward=self._add, execute_backward=self._subtract)
+        add.get_data_inbound_surface().set_port(CallDataInboundPort(container=self, XXX))
+        self.set_logic(add)
+        subtract = add.get_reverse(label=TypicalLabels.logic_subtract)
+        self.set_logic(subtract)
+
+    def _add(self, call):
+        x = call.get_data_inbound_surface().get_port(TypicalLabels.inbound_port_1)
+        y = call.get_data_inbound_surface().get_port(TypicalLabels.inbound_port_2)
+        z = x + y
+        call.get_data_outbound_surface().set_port(TypicalLabels.outbound_port_1)
+
+    def _subtract(self, call):
+        x = call.get_data_inbound_surface().get_port(TypicalLabels.inbound_port_1)
+        y = call.get_data_inbound_surface().get_port(TypicalLabels.inbound_port_2)
+        z = x - y
+        call.get_data_outbound_surface().set_port(TypicalLabels.outbound_port_1)
+
+    def get_logic(self, label=None):
+        return self._library[label]
+
+    def set_logic(self, logic):
+        # Clean all inbound ports
+        # Clean all midbound ports
+        # Clean all outbound ports
+        self._library[logic.get_label()] = logic
+        #TODO: ADD AUTO GENERATION OF PORTS
+
+
+class TypicalLabels(Enum):
+    logic_add = "logic_add"
+    logic_subtract = "logic_subtract"
+    inbound_port_1 = "a"
+    inbound_port_2 = "b"
+    inbound_port_3 = "c"
+    outbound_port_1 = "x"
 
 
 class CallDataInboundSurface(DataObject):
@@ -220,7 +317,7 @@ class CallDataInboundSurface(DataObject):
     def __repr__(self):
         return "{0}({1})".format(self.__class__.__name__, self._data_inbound_ports)
 
-    def add_port(self, data_inbound_port):
+    def set_port(self, data_inbound_port):
         #Assign the proper container object
         data_inbound_port._set_container(self)
         if data_inbound_port.get_label() in self._data_inbound_ports:
@@ -235,8 +332,56 @@ class CallDataInboundSurface(DataObject):
         else:
             # Instead of throwing exceptions, dynamically create a new unlinked port
             new_port = CallDataInboundPort(label=label)
-            self.add_port(new_port)
+            self.set_port(new_port)
             return new_port
+
+
+class CallDataMidboundSurface(DataObject):
+
+    def __init__(self, container=None, label=None):
+        #Base classes initialization
+        DataObject.__init__(self, container=container, label=label)
+        #Initialize pseudo-private members
+        self._data_midbound_ports = {}
+
+    def __repr__(self):
+        return "{0}({1})".format(self.__class__.__name__, self._data_midbound_ports)
+
+    def set_port(self, data_midbound_port):
+        #Assign the proper container object
+        data_midbound_port._set_container(self)
+        if data_midbound_port.get_label() in self._data_midbound_ports:
+            # A port with this label exists already,
+            # remove it automatically.
+            self._data_midbound_ports.pop(key=data_midbound_port.get_label())
+        self._data_midbound_ports[data_midbound_port.get_label()] = data_midbound_port
+
+    def get_port(self, label):
+        if label in self._data_midbound_ports:
+            return self._data_midbound_ports(label)
+        else:
+            # Instead of throwing exceptions, dynamically create a new unlinked port
+            new_port = CallDataMidboundPort(label=label)
+            self.set_port(new_port)
+            return new_port
+
+
+class CallDataMidboundPort(DataObject):
+
+    def __init__(self, container=None, label=None, linked_variable=None):
+        #Base classes initialization
+        DataObject.__init__(self, container=container, label=label)
+        #Initialize pseudo-private members
+        self._linked_variable = None
+        #Call set methods to comply with their logic
+        self.set_linked_variable(linked_variable=linked_variable)
+
+    def get_linked_variable(self):
+        return self._linked_variable
+
+    def set_linked_variable(self, linked_variable):
+        self._linked_variable = linked_variable
+
 
 class CallDataInboundPort(DataObject):
 
@@ -263,7 +408,7 @@ class CallDataOutboundSurface(DataObject):
         #Initialize pseudo-private members
         self._data_outbound_ports = {}
 
-    def add_port(self, data_outbound_port=None):
+    def set_port(self, data_outbound_port=None):
         #If a pre-configured port is not provided, create one out of the blue.
         if data_outbound_port == None:
             data_outbound_port = CallDataOutboundPort()
@@ -281,7 +426,7 @@ class CallDataOutboundSurface(DataObject):
         else:
             # Instead of throwing exceptions, dynamically create a new unlinked port
             new_port = CallDataOutboundPort(label=label)
-            self.add_port(new_port)
+            self.set_port(new_port)
             return new_port
 
 
@@ -397,19 +542,19 @@ class CallComposite(DataObject):
         self._start_call.execute_forward()
 
 
-class CallExecutionTrace(DataObject, ):
+class CallExecutionTrace(DataObject):
 
     def __init__(self):
         pass
 
 
-class CallExecutionTraceForward(CallExecutionTrace, DataObject):
+class CallExecutionTraceForward(CallExecutionTrace):
 
     def __init__(self):
         pass
 
 
-class CallExecutionTraceBackward(CallExecutionTrace, DataObject):
+class CallExecutionTraceBackward(CallExecutionTrace):
     """
     A backward execution trace is distinct from a forward exec trace
     because it informs us on one possible pass amongst multiple
@@ -417,3 +562,11 @@ class CallExecutionTraceBackward(CallExecutionTrace, DataObject):
     """
     def __init__(self):
         pass
+
+class Runtime(DataObject):
+
+    def __init__(self):
+        #Base classes initialization
+        DataObject.__init__(self, container=None, label="Runtime")
+        #Pseudo-private members
+        #Public members
