@@ -7,6 +7,10 @@ import collections # Makes it possible to perform: if isinstance(e, collections.
 from enum import Enum
 
 
+#TODO Implement execution logic, we need:
+#A call or environment variables bag, etc.
+
+
 class DataObject(object):
     """
     A super base class that inherits from object,
@@ -98,29 +102,41 @@ class DataObject(object):
     #    return '\n{0}{{{1}\n{2}}}'.format(' ' * depth, self.to_json_content(depth=depth + 1), ' ' * depth)
     #    #return json.dumps('{{{0}}}'.format(self.to_json_content()), indent=4, sort_keys=True)
 
-    def to_json(self, depth=0, prevent_infinite_loop_list=None):
-        return "\n{0}{{{1}\n{0}}}".format(" " * depth, self.to_json_content(depth=depth, prevent_infinite_loop_list=prevent_infinite_loop_list))
+    #def to_json(self, depth=0, prevent_infinite_loop_list=None):
+    #    return "\n{0}{{{1}\n{0}}}".format(" " * depth, self.to_json_content(depth=depth + 1, prevent_infinite_loop_list=prevent_infinite_loop_list))
 
-    def to_json_content(self, depth=0, prevent_infinite_loop_list=None):
+    def to_json(self, depth=0):
         # QUESTION: Consider using __hash__ instead of get_uid in such a way to cover all objects
         # TODO: Manage dictionaries and lists (all iterable) in sub-loops?
-        if prevent_infinite_loop_list is None:
-            prevent_infinite_loop_list = {}
-        prevent_infinite_loop_list[self.get_uid()] = self
-        json = '\n{0}"class":"{1}"'.format(" " * depth, self.__class__.__name__)
+        json = '\n{0}{{'.format(" " * depth)
+        json += '\n{0}"class":"{1}"'.format(" " * depth, self.__class__.__name__)
         for key in self.__dict__:
-            if isinstance(self.__dict__[key], DataObject):
-                if self.__dict__[key].get_container() is None or self.__dict__[key].get_container().get_uid() != self.get_uid():
-                    # This object was already or will be serialized as part of a parent object,
-                    # in conclusion we must only serialize it as a reference.
-                    json += '\n{0}"{1}"={{"reference":{{"class":"{2}","label":"{3}","uid":"{4}"}}'.format(" " * (depth + 1),  key, self.__dict__[key].__class__.__name__,  self.__dict__[key].get_label(),  self.__dict__[key].get_uid())
+            item = self.__dict__[key]
+            if isinstance(item, DataObject):
+                if item.get_container() is None or item.get_container().get_uid() != self.get_uid():
+                    json += '\n{0},"{1}":{{reference:{{{2}}}}}'.format(" " * depth, key, item.to_json_reference())
                 else:
-                    prevent_infinite_loop_list[self.__dict__[key].get_uid()] = self.__dict__[key]
-                    # Otherwise we can perform a deep serialization.
-                    json += '\n{0}"{1}"={{{2}}}'.format(" " * (depth + 1),  key, self.__dict__[key].to_json_content())
+                    json += '\n{0},"{1}":{2}'.format(" " * depth,  key, item.to_json(depth=depth + 1))
+            elif type(item) is dict:
+                json += '\n{0},"{1}":'.format(" " * depth, key)
+                json += '\n{0}['.format(" " * (depth + 1))
+                is_first_sub_item = True
+                for sub_key, sub_item in item.items():
+                    if isinstance(sub_item, DataObject):
+                        if sub_item.get_container() is None or sub_item.get_container().get_uid() != self.get_uid():
+                            json += '\n{0}{{reference:{{{1}}}}}'.format(" " * (depth + 1), sub_item.to_json_reference())
+                        else:
+                            json += sub_item.to_json(depth=(depth + 2))
+                    else:
+                        json += '\n{0}""{1}""'.format(" " * (depth + 1), str(sub_item))
+                json += '\n{0}]'.format(" " * (depth + 1))
             else:
-                json += '\n{0}"{1}":"{2}"'.format(" " * depth, key, str(self.__dict__[key]))
+                json += '\n{0},"{1}":"{2}"'.format(" " * depth, key, str(item))
+        json += '\n{0}}}'.format(" " * depth)
         return json
+
+    def to_json_reference(self):
+        return '{{"reference":{{"class":"{0}","label":"{1}","uid":"{2}"}}'.format(self.__class__.__name__,  self.get_label(),  self.get_uid())
 
     def get_label(self):
         return self._label
@@ -144,6 +160,9 @@ class DataObject(object):
 
 class Call(DataObject):
 
+    # TODO: Consider simplifying the implementation by not using dedicated classes for collection,
+    # instead, it should be possible to expose get_iterator methods, such as get_inbound_ports_iterator.
+
     def __init__(self, label=None, logic=None):
         #Base classes initialization
         DataObject.__init__(self, label=label)
@@ -166,6 +185,8 @@ class Call(DataObject):
         return self._data_inbound_surface
 
     def _set_data_inbound_surface(self, data_inbound_surface):
+        if not (isinstance(data_inbound_surface, CallDataInboundSurface)):
+            raise Error(container=None, label=None, level=ErrorLevel.execution_stop, caller_object=self, data_inbound_surface=data_inbound_surface)
         data_inbound_surface._set_container(self)
         self._data_inbound_surface = data_inbound_surface
 
@@ -209,21 +230,42 @@ class Call(DataObject):
         self.get_data_outbound_surface().reinitialize()
         # Attach the logic to the call
         self._logic = logic
-        # Configure outbound ports
+        # Configure inbound ports
         for label, data_inbound_port in self.get_logic().get_data_inbound_surface().get_ports().items():
+            label = data_inbound_port.get_label()
             data_inbound_port = CallDataInboundPort(container=None, label=label)
             self.get_data_inbound_surface().set_port(data_inbound_port)
         # Configure private ports
-        for label, data_inbound_port in self.get_logic().get_data_private_surface().get_ports().items():
-            data_inbound_port = CallDataInboundPort(container=None, label=label)
-            self.get_data_inbound_surface().set_port(data_inbound_port)
-        # Configure inbound ports
-        for label, data_inbound_port in self.get_logic().get_data_outbound_surface().get_ports().items():
-            data_outbound_port = CallDataInboundPort(container=None, label=label)
-            self.get_data_inbound_surface().set_port(data_outbound_port)
+        for label, data_private_port in self.get_logic().get_data_private_surface().get_ports().items():
+            label = data_private_port.get_label()
+            data_private_port = CallDataPrivatePort(container=None, label=label)
+            self.get_data_private_surface().set_port(data_private_port)
+        # Configure outbound ports
+        for label, data_outbound_port in self.get_logic().get_data_outbound_surface().get_ports().items():
+            label = data_outbound_port.get_label()
+            data_outbound_port = CallDataOutboundPort(container=None, label=label)
+            self.get_data_outbound_surface().set_port(data_outbound_port)
 
     def get_logic(self):
         return self._logic
+
+
+class Error(Exception, DataObject):
+    def __init__(self, container=None, label=None, level=None, **kwargs):
+        #Base classes initialization
+        DataObject.__init__(self, container=None, label=label)
+        #Initialize pseudo-private members
+        self._level = level
+        self._information_items = kwargs
+
+
+class ErrorLevel(Enum):
+    system_stop = 1
+    system_warning = 2
+    system_info = 3
+    execution_stop = 4
+    execution_warning = 5
+    execution_info = 6
 
 
 class Logic(DataObject):
@@ -256,7 +298,10 @@ class Logic(DataObject):
         pass
 
     def get_reverse(self, label=None):
-        return Logic(container=self.get_container(), label=label, execute_forward=self.execute_backward, execute_backward=self.execute_forward)
+        return Logic(container=self.get_container(), \
+                     label=label, \
+                     execute_forward=self.execute_backward, \
+                     execute_backward=self.execute_forward)
 
     def get_data_inbound_surface(self):
         return self._data_inbound_surface
@@ -317,16 +362,16 @@ class LogicLibrary(DataObject):
         pass
 
     def _add(self, call):
-        x = call.get_data_inbound_surface().get_port(TypicalLabels.inbound_port_1)
-        y = call.get_data_inbound_surface().get_port(TypicalLabels.inbound_port_2)
+        x = call.get_data_inbound_surface().get_port(TypicalLabels.inbound_port_1).get_linked_value().get_value()
+        y = call.get_data_inbound_surface().get_port(TypicalLabels.inbound_port_2).get_linked_value().get_value()
         z = x + y
-        call.get_data_outbound_surface().set_port(TypicalLabels.outbound_port_1)
+        call.get_data_outbound_surface().get_port(TypicalLabels.outbound_port_1).get_linked_value().set_value(value=z)
 
     def _subtract(self, call):
-        x = call.get_data_inbound_surface().get_port(TypicalLabels.inbound_port_1)
-        y = call.get_data_inbound_surface().get_port(TypicalLabels.inbound_port_2)
+        x = call.get_data_inbound_surface().get_port(TypicalLabels.inbound_port_1).get_linked_value().get_value()
+        y = call.get_data_inbound_surface().get_port(TypicalLabels.inbound_port_2).get_linked_value().get_value()
         z = x - y
-        call.get_data_outbound_surface().set_port(TypicalLabels.outbound_port_1)
+        call.get_data_outbound_surface().get_port(TypicalLabels.outbound_port_1).get_linked_value().set_value(value=z)
 
     def get_logic(self, label=None):
         return self._library[label]
@@ -346,6 +391,8 @@ class TypicalLabels(Enum):
     inbound_port_2 = "b"
     inbound_port_3 = "c"
     outbound_port_1 = "x"
+    outbound_port_2 = "y"
+    outbound_port_3 = "z"
 
 
 class CallDataInboundSurface(DataObject):
@@ -380,10 +427,8 @@ class CallDataInboundSurface(DataObject):
             self.set_port(new_port)
             return new_port
 
-
     def get_ports(self):
         return self._data_inbound_ports
-
 
 
 class CallDataPrivateSurface(DataObject):
@@ -516,6 +561,7 @@ class CallDataOutboundPort(DataObject):
         return self._linked_variable
 
     def set_linked_variable(self, linked_variable):
+        # TODO: Check point: variable must not be contained by port, it must be rather owned by the bigger parent environment
         self._linked_variable = linked_variable
 
 
@@ -576,12 +622,12 @@ class CallExecutionOutboundSurface(DataObject):
             return self._exec_outbound_ports(label)
         else:
             # Instead of throwing exceptions, dynamically create a new unlinked port
-            new_port = CallDataInboundPort(container_surface=self, label=label)
+            new_port = CallDataOutboundPort(container_surface=self, label=label)
             self.add_port(new_port)
             return new_port
 
 
-class CallExecOutboundPort(DataObject):
+class CallExecutionOutboundPort(DataObject):
 
     def __init__(self, container=None, label=None):
         #Base classes initialization
@@ -592,11 +638,20 @@ class CallExecOutboundPort(DataObject):
 
 class DataVariable(DataObject):
 
-    def __init__(self, container=None, label=None):
+    def __init__(self, container=None, label=None, value=None):
         #Base classes initialization
         DataObject.__init__(self, container=container, label=label)
         #Pseudo-private members
+        self._value = None
         #Public members
+        #Initialization methods
+        self.set_value(value=value)
+
+    def get_value(self):
+        return self._value
+
+    def set_value(self,value):
+        self._value = value
 
 
 class DataSurface(DataObject):
@@ -608,14 +663,33 @@ class DataSurface(DataObject):
         #Public members
 
 
-class CallComposite(DataObject):
-    #TODO: Inherit from Call in such a way as to make Algorithms callable
-    def __init__(self, start_call, end_call):
-        self._start_call = start_call
-        self._end_call = end_call
+class CallComposite(Call):
+    """
+    A composite call is a call that contains a collection of calls
+    and that maps them together with an execution graph.
+    This inheritance makes it easy to set inbound ports and retrieve
+    outbound ports after execution.
+    """
+    def __init__(self):
+        self._calls = {}
+        self._start_call = None
+        self._end_call = None
 
     def start(self):
         self._start_call.execute_forward()
+
+    def add_call(self, call=None):
+        label = call.get_label()
+        call._set_container(container=self)
+        self._calls[label] = call
+
+    def set_start_call(self, call=None):
+        ######
+        # TODO: Complete implementation from here
+        self._start_call = call
+
+    def set_end_call(self, call=None):
+        self._end_call = call
 
 
 class CallExecutionTrace(DataObject):
