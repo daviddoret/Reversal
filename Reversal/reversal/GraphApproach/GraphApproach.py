@@ -103,13 +103,14 @@ class DataObject(object):
 
     def to_json_content(self, depth=0, prevent_infinite_loop_list=None):
         # QUESTION: Consider using __hash__ instead of get_uid in such a way to cover all objects
+        # TODO: Manage dictionaries and lists (all iterable) in sub-loops?
         if prevent_infinite_loop_list is None:
             prevent_infinite_loop_list = {}
         prevent_infinite_loop_list[self.get_uid()] = self
         json = '\n{0}"class":"{1}"'.format(" " * depth, self.__class__.__name__)
         for key in self.__dict__:
             if isinstance(self.__dict__[key], DataObject):
-                if self.__dict__[key].get_uid() in prevent_infinite_loop_list:
+                if self.__dict__[key].get_container() is None or self.__dict__[key].get_container().get_uid() != self.get_uid():
                     # This object was already or will be serialized as part of a parent object,
                     # in conclusion we must only serialize it as a reference.
                     json += '\n{0}"{1}"={{"reference":{{"class":"{2}","label":"{3}","uid":"{4}"}}'.format(" " * (depth + 1),  key, self.__dict__[key].__class__.__name__,  self.__dict__[key].get_label(),  self.__dict__[key].get_uid())
