@@ -8,9 +8,10 @@ from Reversal.reversal.GraphApproach.FunctionPlane import *
 from Reversal.reversal.GraphApproach.Runtime import *
 
 
-class ExecutionGraph(DataObject):
+class ExecutionGraph(Call):
     """
-    ...
+    An execution graph is a directed graph of task items that defines the execution path of an algorithm.
+    Important rule: the execution plane must not comprise functional logic.
     """
     def __init__(self, container=None, label=None, logic=None):
         #Base classes initialization
