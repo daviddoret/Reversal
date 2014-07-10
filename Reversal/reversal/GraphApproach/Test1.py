@@ -1,6 +1,6 @@
 __author__ = 'dmd'
 
-from Reversal.reversal.GraphApproach.GraphApproach import *
+from Reversal.reversal.GraphApproach.FunctionPlane import *
 import json
 
 f1 = Call(label="Add 10")
